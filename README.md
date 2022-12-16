@@ -54,7 +54,12 @@ Upper bound, Lower bound, EWC, Online EWC, SI, MAS, GEM, PSP, and Adapters. <br 
 EWC, Online EWC, SI, MAS, GEM methods are adapted from:
 Hsu, Y.C., Liu, Y.C., Ramasamy, A., Kira, Z., 2018. Re-evaluating continual
 learning scenarios: A categorization and case for strong baselines, in:
-NeurIPS Continual learning Workshop. <br />
+NeurIPS Continual learning Workshop.
+
+<br/>
+
+#### Transformer for NLP datasets
+
 Starting from the root directory, you can run models as follows:
 
 - *SuperFormer*
@@ -119,7 +124,10 @@ python separate_networks_and_adapters.py --method Adapters
 ```
 
 
-<br/><br/>
+<br/>
+
+#### MLP and CNN for Split CIFAR-100
+
 Since SuperFormer use is not limited to transformer-based models and NLP domain, 
 we conducted experiments also with MLP and CNN models for Split CIFAR-100 dataset.
 
