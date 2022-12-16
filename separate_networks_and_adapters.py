@@ -3,6 +3,7 @@ import argparse
 from models import *
 from superposition import *
 from prepare_data import *
+from Split_CIFAR_100_preparation import get_dataset
 from sklearn.metrics import roc_auc_score, classification_report, confusion_matrix
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import TensorDataset
@@ -11,6 +12,7 @@ from torch.utils.data import TensorDataset
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--method', type=str, default='Upper_bound', choices=['Upper_bound', 'Lower_bound', 'Adapters'])
+    parser.add_argument('--network_type', type=str, default='transformer', choices=['transformer', 'MLP', 'CNN'])
     parser.add_argument('--num_runs', type=int, default=5)
     args, _ = parser.parse_known_args()
 
@@ -35,28 +37,34 @@ if __name__ == '__main__':
     elif args.method == 'Adapters':
         method = 'adapters'
 
-    input_size = 32
+    input_size = 32 if args.network_type == 'transformer' else (3, 32, 32)
     num_heads = 4
     num_layers = 1      # number of transformer encoder layers
     dim_feedforward = 1024
-    num_classes = 2
+    num_classes = 2 if args.network_type == 'transformer' else 10
     bottleneck_size = 4    # only used with adapters
     standardize_input = False
     restore_best_auroc = False
     do_early_stopping = True
-    stopping_criteria = 'auroc'  # possibilities: 'acc', 'auroc', 'auprc'
+    stopping_criteria = 'auroc' if args.network_type == 'transformer' else 'acc'   # possibilities: 'acc', 'auroc', 'auprc'
 
     batch_size = 128
     num_runs = args.num_runs
-    num_tasks = 6
+    num_tasks = 6 if args.network_type == 'transformer' else 10
     num_epochs = 500 if method == 'adapters' else 50
-    learning_rate = 0.001
+    learning_rate = 0.0001 if args.network_type == 'CNN' else 0.001
 
     task_names = [['HS', 'SA', 'S', 'SA_2', 'C', 'HD'],
                   ['C', 'HD', 'SA', 'HS', 'SA_2', 'S'],
                   ['SA', 'S', 'HS', 'SA_2', 'HD', 'C'],
                   ['HD', 'SA_2', 'SA', 'C', 'S', 'HS'],
                   ['SA', 'HS', 'C', 'SA_2', 'HD', 'S']]
+
+    # load Split CIFAR-100
+    if args.network_type == 'MLP':
+        split_cifar_100 = get_dataset('nn', (32, 32, 3))
+    elif args.network_type == 'CNN':
+        split_cifar_100 = get_dataset('cnn', (32, 32, 3))
 
     # Train model for 'num_runs' runs for 'num_tasks' tasks
     acc_arr = np.zeros((num_runs, num_tasks))
@@ -91,18 +99,26 @@ if __name__ == '__main__':
                     params.requires_grad = False
                 print('Requires_grad: %s,  layer name: "%s", number of layer parameters: %d' % (str(params.requires_grad), name, params.numel()))
         elif method == 'lower bound':
-            if use_MLP:
-                model = MLP(input_size, num_classes).to(device)
-            else:
+            if args.network_type == 'MLP':
+                use_MLP = True
+                model = MLP(input_size, num_classes, data='CV').to(device)  # or data='NLP'
+            elif args.network_type == 'CNN':
+                use_MLP = True  # even though the model is CNN, this variable denotes we do not use transformers
+                model = CNN(input_size, num_classes).to(device)
+            elif args.network_type == 'transformer':
                 model = MyTransformer(input_size, num_heads, num_layers, dim_feedforward, num_classes).to(device)
 
         for t in range(num_tasks):
             print('- Task %d -' % (t + 1))
 
             if method == 'upper bound':
-                if use_MLP:
-                    model = MLP(input_size, num_classes).to(device)
-                else:
+                if args.network_type == 'MLP':
+                    use_MLP = True
+                    model = MLP(input_size, num_classes, data='CV').to(device)  # or data='NLP'
+                elif args.network_type == 'CNN':
+                    use_MLP = True  # even though the model is CNN, this variable denotes we do not use transformers
+                    model = CNN(input_size, num_classes).to(device)
+                elif args.network_type == 'transformer':
                     model = MyTransformer(input_size, num_heads, num_layers, dim_feedforward, num_classes).to(device)
 
                 if t == 0:
@@ -125,29 +141,51 @@ if __name__ == '__main__':
             best_auroc_val = 0
 
             # prepare data
-            X, y, mask = get_data(task_names[r][t])
+            if args.network_type == 'transformer':
+                X, y, mask = get_data(task_names[r][t])
 
-            if standardize_input:
-                for i in range(X.shape[0]):
-                    X[i, :, :] = torch.from_numpy(StandardScaler().fit_transform(X[i, :, :]))
+                if standardize_input:
+                    for i in range(X.shape[0]):
+                        X[i, :, :] = torch.from_numpy(StandardScaler().fit_transform(X[i, :, :]))
 
-                    # where samples are padded, make zeros again
-                    mask_i = torch.ones(X.shape[1]) - mask[i, :]
-                    for j in range(X.shape[2]):
-                        X[i, :, j] = X[i, :, j] * mask_i
+                        # where samples are padded, make zeros again
+                        mask_i = torch.ones(X.shape[1]) - mask[i, :]
+                        for j in range(X.shape[2]):
+                            X[i, :, j] = X[i, :, j] * mask_i
 
-            # split data into train, validation and test set
-            y = torch.max(y, 1)[1]  # change one-hot-encoded vectors to numbers
-            permutation = torch.randperm(X.size()[0])
-            X = X[permutation]
-            y = y[permutation]
-            mask = mask[permutation]
-            index_val = round(0.8 * len(permutation))
-            index_test = round(0.9 * len(permutation))
+                # split data into train, validation and test set
+                y = torch.max(y, 1)[1]  # change one-hot-encoded vectors to numbers
+                permutation = torch.randperm(X.size()[0])
+                X = X[permutation]
+                y = y[permutation]
+                mask = mask[permutation]
+                index_val = round(0.8 * len(permutation))
+                index_test = round(0.9 * len(permutation))
 
-            X_train, y_train, mask_train = X[:index_val, :, :], y[:index_val], mask[:index_val, :]
-            X_val, y_val, mask_val = X[index_val:index_test, :, :], y[index_val:index_test], mask[index_val:index_test, :]
-            X_test, y_test, mask_test = X[index_test:, :, :], y[index_test:], mask[index_test:, :]
+                X_train, y_train, mask_train = X[:index_val, :, :], y[:index_val], mask[:index_val, :]
+                X_val, y_val, mask_val = X[index_val:index_test, :, :], y[index_val:index_test], mask[index_val:index_test, :]
+                X_test, y_test, mask_test = X[index_test:, :, :], y[index_test:], mask[index_test:, :]
+            elif args.network_type == 'MLP' or args.network_type == 'CNN':
+                X_train, y_train, X_test, y_test = split_cifar_100[t]
+                y_train = torch.max(y_train, 1)[1]  # change one-hot-encoded vectors to numbers
+                y_test = torch.max(y_test, 1)[1]  # change one-hot-encoded vectors to numbers
+                permutation = torch.randperm(X_train.size()[0])
+                X_train = X_train[permutation]
+                y_train = y_train[permutation]
+
+                mask_train_val = torch.FloatTensor(
+                    [0] * len(X_train))  # only for the purpose of compatibility with transformer network
+                mask_test = torch.FloatTensor(
+                    [0] * len(X_test))  # only for the purpose of compatibility with transformer network
+                index_val = round(0.9 * len(permutation))  # use 10% of test set as validation set
+
+                if args.network_type == 'MLP':
+                    X_val, y_val, mask_val = X_train[index_val:, :], y_train[index_val:], mask_train_val[index_val:]
+                    X_train, y_train, mask_train = X_train[:index_val, :], y_train[:index_val], mask_train_val[:index_val]
+
+                elif args.network_type == 'CNN':
+                    X_val, y_val, mask_val = X_train[index_val:, :, :, :], y_train[index_val:], mask_train_val[index_val:]
+                    X_train, y_train, mask_train = X_train[:index_val, :, :, :], y_train[:index_val], mask_train_val[:index_val]
 
             train_dataset = TensorDataset(X_train, y_train, mask_train)
             val_dataset = TensorDataset(X_val, y_val, mask_val)
@@ -349,7 +387,7 @@ if __name__ == '__main__':
     '''
 
     show_only_accuracy = False
-    min_y = 50
+    min_y = 50 if args.network_type == 'transformer' else 0
     colors = ['tab:blue', 'tab:orange', 'tab:green']
     if do_early_stopping:
         vertical_lines_x = []
@@ -410,5 +448,12 @@ if __name__ == '__main__':
                              '#runs: %d, %s task results, %s model, %s' % (num_runs, first_average, method,
                              'ES on %s' % stopping_criteria if do_early_stopping else 'no ES'),
                              colors[:len(metrics)], 'Metric value', min_y)
+
+    print('\nMean time per task:')
+    print([sum(mean_time_per_task[:i + 1]) / 60 for i in range(len(mean_time_per_task))])
+
+    print('\nEnd performance')
+    [print(k, ':', v['acc'], '+/-', v['std_acc']) for k, v in end_performance.items()]
+    print([v['acc'] for k, v in end_performance.items()])
 
 

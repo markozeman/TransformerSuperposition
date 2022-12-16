@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.nn import TransformerEncoder, Linear, Dropout, LayerNorm, MultiheadAttention
 from torch.nn import functional as F
+from math import prod
 
 
 class MLP(nn.Module):
@@ -33,10 +34,10 @@ class MLP(nn.Module):
         return x
 
 
-class MyMLP(nn.Module):
+class MyMLP_for_NLP(nn.Module):
 
     def __init__(self, input_size=32, num_classes=2):
-        super(MyMLP, self).__init__()
+        super(MyMLP_for_NLP, self).__init__()
 
         self.linear = nn.Sequential(
             nn.Linear(input_size * 256, input_size),   # 8192 -> 32
@@ -59,6 +60,60 @@ class MyMLP(nn.Module):
         return x
 
 
+class MyMLP(nn.Module):
+
+    def __init__(self, input_size=(3, 32, 32), num_classes=10):
+        super(MyMLP, self).__init__()
+
+        input_len = prod(input_size)
+        hidden_size = 1000
+
+        self.linear = nn.Sequential(
+            nn.Linear(input_len, hidden_size),
+            nn.ReLU()
+        )
+        self.last = nn.Linear(hidden_size, num_classes)
+
+    def features(self, x):
+        x = self.linear(x)
+        return x
+
+    def logits(self, x):
+        x = self.last(x)
+        return x
+
+    def forward(self, input):
+        x = self.features(input)
+        x = self.logits(x)
+        return x
+
+
+class MyCNN(nn.Module):
+    def __init__(self, input_size=(3, 32, 32), num_classes=10):
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_size[0], 32, (3, 3))
+        self.conv2 = nn.Conv2d(32, 64, (3, 3))
+        self.pool = nn.MaxPool2d(2, 2)
+        self.linear = nn.Linear(64 * 6 * 6, 1323)
+        self.last = nn.Linear(1323, num_classes)
+
+    def features(self, x):
+        x = self.linear(x)
+        return x
+
+    def logits(self, x):
+        x = self.last(x)
+        return x
+
+    def forward(self, input):
+        x = self.pool(F.relu(self.conv1(input)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = torch.flatten(x, 1)  # flatten all dimensions except batch
+        x = F.relu(self.features(x))
+        x = self.logits(x)
+        return x
+
+
 class MyTransformer(nn.Module):
 
     def __init__(self, input_size=32, num_heads=4, num_layers=1, dim_feedforward=1024, num_classes=2):
@@ -66,12 +121,6 @@ class MyTransformer(nn.Module):
 
         transformer_encoder_layer = MyTransformerEncoderLayer(input_size, num_heads, dim_feedforward, batch_first=True)
         self.transformer_encoder = TransformerEncoder(transformer_encoder_layer, num_layers)
-
-        # self.mlp = nn.Sequential(
-        #     nn.Linear(input_size * 256, input_size),   # 8192 -> 32
-        #     nn.ReLU(),
-        #     nn.Linear(input_size, num_classes),  # 32 -> 2
-        # )
 
         self.linear = nn.Sequential(
             nn.Linear(input_size * 256, input_size),  # 8192 -> 32
@@ -137,6 +186,9 @@ def myMLP():
 def myTransformer():
     return MyTransformer()
 
+
+def myCNN():
+    return MyCNN()
 
 
 def MLP100():

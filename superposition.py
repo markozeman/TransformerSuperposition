@@ -36,7 +36,11 @@ def create_context_vectors(model, num_tasks, element_wise, use_PSP=False):
         task_contexts = []
         for name, params in model.named_parameters():
             if name.endswith('weight'):     # only weight, not bias
-                if 'self_attn' not in name:     # FC layer
+                if 'conv' in name:
+                    vector_size = math.prod(params.size())
+                    if t == 0:
+                        layer_dimension.append(2)   # to apply element-wise product
+                elif 'self_attn' not in name:     # FC layer
                     vector_size = params.size()[1]
                     if t == 0:
                         layer_dimension.append(1)
@@ -89,7 +93,7 @@ def context_multiplication(model, contexts, layer_dimension, task_index):
                         new_params = torch.matmul(params, context_matrix)
                     elif layer_dimension[layer_index] == 2:    # element-wise multiplication
                         context_matrix = torch.from_numpy(np.reshape(contexts[task_index][layer_index],
-                                                                     newshape=(params.size()[0], params.size()[1])).astype(np.float32)).cuda()
+                                                                     newshape=params.size()).astype(np.float32)).cuda()
                         new_params = params * context_matrix
                     else:
                         raise ValueError('Layer dimension must be 0, 1 or 2.')

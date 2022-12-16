@@ -42,8 +42,12 @@ def get_stats(outputs, y):
     probs = torch.squeeze(torch.softmax(outputs, dim=1))
     probs = probs.cpu().detach().numpy()
     true = y.cpu().detach().numpy()
-    auroc = roc_auc_score(true, probs[:, 1])
-    auprc = average_precision_score(true, probs[:, 1])
+    try:
+        auroc = roc_auc_score(true, probs[:, 1])
+        auprc = average_precision_score(true, probs[:, 1])
+    except ValueError as ve:    # for multi-class classification we calculate only accuracy
+        auroc = -1
+        auprc = -1
     predicted = np.argmax(outputs.cpu().detach().numpy(), axis=1).ravel()
     acc = np.sum(true == predicted) / true.shape[0]
     return acc, auroc, auprc

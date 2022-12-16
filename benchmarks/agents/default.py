@@ -54,8 +54,8 @@ class NormalNN(nn.Module):
             self.config['optimizer'] = 'Adam'
 
         self.optimizer = torch.optim.__dict__[self.config['optimizer']](**optimizer_arg)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.1, patience=2,
-                                                                    threshold=0.0001, min_lr=1e-8, verbose=True)
+        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.1, patience=2,
+        #                                                             threshold=0.0001, min_lr=1e-8, verbose=True)
 
     def create_model(self):
         cfg = self.config
@@ -170,7 +170,7 @@ class NormalNN(nn.Module):
         if do_early_stopping:
             best_prev_value = 0
 
-        num_epochs = 50
+        num_epochs = 100
 
         for epoch in range(1, num_epochs+1):
             data_timer = Timer()
@@ -220,7 +220,7 @@ class NormalNN(nn.Module):
 
             self.log(' * Train Acc {acc.avg:.3f}'.format(acc=acc))
 
-            self.scheduler.step(acc.val)
+            # self.scheduler.step(acc.val)
 
             # Evaluate the performance of current task
             if val_loader != None:
@@ -315,8 +315,12 @@ def get_stats(outputs, target):
     probs = torch.squeeze(torch.softmax(outputs, dim=1))
     probs = probs.cpu().detach().numpy()
     true = target.cpu().detach().numpy()
-    auroc = roc_auc_score(true, probs[:, 1])
-    auprc = average_precision_score(true, probs[:, 1])
+    try:
+        auroc = roc_auc_score(true, probs[:, 1])
+        auprc = average_precision_score(true, probs[:, 1])
+    except ValueError as ve:    # for multi-class classification we calculate only accuracy
+        auroc = -1
+        auprc = -1
     predicted = np.argmax(outputs.cpu().detach().numpy(), axis=1).ravel()
     acc = np.sum(true == predicted) / true.shape[0]
     return acc, auroc, auprc

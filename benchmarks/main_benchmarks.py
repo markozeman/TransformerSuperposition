@@ -10,6 +10,7 @@ from torch import Tensor
 from torch.utils.data import TensorDataset
 import agents
 from agents.default import plot_multiple_histograms
+from Split_CIFAR_100_preparation import get_dataset
 
 
 def get_data(s):
@@ -47,11 +48,11 @@ def get_data(s):
     return X, y, mask
 
 
-def run(args, do_early_stopping, stopping_criteria, task_names, times_per_task=None, previous_time=None):
+def run(args, do_early_stopping, stopping_criteria, task_names, num_tasks, times_per_task=None, previous_time=None, split_cifar_100=None):
     if not os.path.exists('outputs'):
         os.mkdir('outputs')
 
-    task_output_space = {name: 2 for name in task_names}
+    task_output_space = {name: 2 for name in task_names} if args.network_type == 'transformer' else {name: 10 for name in task_names}
     test_all_tasks = []
 
     # Prepare the Agent (model)
@@ -82,26 +83,46 @@ def run(args, do_early_stopping, stopping_criteria, task_names, times_per_task=N
 
     else:  # Incremental learning
         # Feed data to agent and evaluate agent's performance
-        for i in range(len(task_names)):
+        for i in range(num_tasks):
             train_name = task_names[i]
             print('======================',train_name,'=======================')
 
             # prepare data
-            X, y, mask = get_data(train_name)
+            if args.network_type == 'transformer':
+                X, y, mask = get_data(train_name)
 
-            # split data into train, validation and test set
-            y = torch.max(y, 1)[1]  # change one-hot-encoded vectors to numbers
-            permutation = torch.randperm(X.size()[0])
-            X = X[permutation]
-            y = y[permutation]
-            mask = mask[permutation]
-            index_val = round(0.8 * len(permutation))
-            index_test = round(0.9 * len(permutation))
+                # split data into train, validation and test set
+                y = torch.max(y, 1)[1]  # change one-hot-encoded vectors to numbers
+                permutation = torch.randperm(X.size()[0])
+                X = X[permutation]
+                y = y[permutation]
+                mask = mask[permutation]
+                index_val = round(0.8 * len(permutation))
+                index_test = round(0.9 * len(permutation))
 
-            # X_train, y_train, mask_train = X[:index_val, :, :].to("cuda:0"), y[:index_val].to("cuda:0"), mask[:index_val,:].to("cuda:0")  # train data to GPU
-            X_train, y_train, mask_train = X[:index_val, :, :], y[:index_val], mask[:index_val,:]
-            X_val, y_val, mask_val = X[index_val:index_test, :, :], y[index_val:index_test], mask[index_val:index_test,:]
-            X_test, y_test, mask_test = X[index_test:, :, :], y[index_test:], mask[index_test:, :]
+                # X_train, y_train, mask_train = X[:index_val, :, :].to("cuda:0"), y[:index_val].to("cuda:0"), mask[:index_val,:].to("cuda:0")  # train data to GPU
+                X_train, y_train, mask_train = X[:index_val, :, :], y[:index_val], mask[:index_val,:]
+                X_val, y_val, mask_val = X[index_val:index_test, :, :], y[index_val:index_test], mask[index_val:index_test,:]
+                X_test, y_test, mask_test = X[index_test:, :, :], y[index_test:], mask[index_test:, :]
+            elif args.network_type == 'MLP' or args.network_type == 'CNN':
+                X_train, y_train, X_test, y_test = split_cifar_100[i]
+                y_train = torch.max(y_train, 1)[1]  # change one-hot-encoded vectors to numbers
+                y_test = torch.max(y_test, 1)[1]  # change one-hot-encoded vectors to numbers
+                permutation = torch.randperm(X_train.size()[0])
+                X_train = X_train[permutation]
+                y_train = y_train[permutation]
+
+                mask_train_val = torch.FloatTensor([0] * len(X_train))  # only for the purpose of compatibility with transformer network
+                mask_test = torch.FloatTensor([0] * len(X_test))  # only for the purpose of compatibility with transformer network
+                index_val = round(0.9 * len(permutation))  # use 10% of test set as validation set
+
+                if args.network_type == 'MLP':
+                    X_val, y_val, mask_val = X_train[index_val:, :], y_train[index_val:], mask_train_val[index_val:]
+                    X_train, y_train, mask_train = X_train[:index_val, :], y_train[:index_val], mask_train_val[:index_val]
+
+                elif args.network_type == 'CNN':
+                    X_val, y_val, mask_val = X_train[index_val:, :, :, :], y_train[index_val:], mask_train_val[index_val:]
+                    X_train, y_train, mask_train = X_train[:index_val, :, :, :], y_train[:index_val], mask_train_val[:index_val]
 
             # tasks4compatibility = np.array(tuple([str(i + 1)] * args.batch_size))
             train_dataset = TensorDataset(X_train, y_train, mask_train)     # mask not used
@@ -155,7 +176,7 @@ def get_args(argv):
     parser.add_argument('--force_out_dim', type=int, default=2, help="Set 0 to let the task decide the required output dimension")
     parser.add_argument('--agent_type', type=str, default='default', help="The type (filename) of agent")
     parser.add_argument('--agent_name', type=str, default='NormalNN', help="The class name of agent")
-    parser.add_argument('--optimizer', type=str, default='SGD', help="SGD|Adam|RMSprop|amsgrad|Adadelta|Adagrad|Adamax ...")
+    parser.add_argument('--optimizer', type=str, default='Adam', help="SGD|Adam|RMSprop|amsgrad|Adadelta|Adagrad|Adamax ...")
     parser.add_argument('--dataroot', type=str, default='data', help="The root folder of dataset or downloaded data")
     parser.add_argument('--dataset', type=str, default='MNIST', help="MNIST(default)|CIFAR10|CIFAR100")
     parser.add_argument('--n_permutation', type=int, default=10, help="Enable permuted tests when >0")
@@ -188,6 +209,7 @@ def get_args(argv):
     parser.add_argument('--incremental_class', dest='incremental_class', default=False, action='store_true',
                         help="The number of output node in the single-headed model increases along with new categories.")
     parser.add_argument('--method', type=str, default='EWC', choices=['EWC', 'Online_EWC', 'SI', 'MAS', 'GEM_Large', 'GEM_Small'])
+    parser.add_argument('--network_type', type=str, default='transformer', choices=['transformer', 'MLP', 'CNN'])
     parser.add_argument('--num_runs', type=int, default=5)
     args = parser.parse_args(argv)
     return args
@@ -198,7 +220,7 @@ if __name__ == '__main__':
     reg_coef_list = args.reg_coef
     avg_final_acc = {}
     do_early_stopping = True
-    stopping_criteria = 'auroc'  # possibilities: 'acc', 'auroc', 'auprc'
+    stopping_criteria = 'auroc' if args.network_type == 'transformer' else 'acc'  # possibilities: 'acc', 'auroc', 'auprc'
     args.repeat = args.num_runs   # number of runs
 
     if args.method == 'EWC':
@@ -206,23 +228,42 @@ if __name__ == '__main__':
     elif args.method == 'Online_EWC':
         args.method = 'EWC_online_mnist'
     elif args.method == 'GEM_Large':
-        args.method = 'GEM_300'
+        args.method = 'GEM_300' if args.network_type == 'transformer' else 'GEM_500'    # 50 memory slots per task
     elif args.method == 'GEM_Small':
-        args.method = 'GEM_30'
+        args.method = 'GEM_30' if args.network_type == 'transformer' else 'GEM_50'      # 5 memory slots per task
     args.agent_name = args.method   # continual learning method; options: ['EWC_mnist', 'EWC_online_mnist', 'SI', 'MAS', 'GEM_x']
 
-    args.force_out_dim = 2  # number of output neurons / number of classes
-    args.model_name = 'myTransformer'  # to use Transformer model
+    args.force_out_dim = 2 if args.network_type == 'transformer' else 10  # number of output neurons / number of classes
+    num_tasks = 6 if args.network_type == 'transformer' else 10
+    args.lr = 0.0001 if args.network_type == 'CNN' else 0.001
+
+    if args.network_type == 'transformer':
+        args.model_name = 'myTransformer'  # to use Transformer model
+    elif args.network_type == 'MLP':
+        args.model_name = 'myMLP'
+    elif args.network_type == 'CNN':
+        args.model_name = 'myCNN'
+
+    # load Split CIFAR-100
+    if args.network_type == 'MLP':
+        split_cifar_100 = get_dataset('nn', (32, 32, 3))
+    elif args.network_type == 'CNN':
+        split_cifar_100 = get_dataset('cnn', (32, 32, 3))
+    else:
+        split_cifar_100 = None
+
     args.agent_type = 'regularization' if args.agent_name == 'MAS' or args.agent_name == 'SI' else 'customization'
-    args.optimizer = 'SGD' if args.agent_name.startswith('GEM') else 'Adam'
+    # args.optimizer = 'SGD' if args.agent_name.startswith('GEM') else 'Adam'
     best_reg_coefs = {      # based on coefficient search
         'EWC_mnist': 5000,  # _mnist does not mean we run it on MNIST (used for backward compatibility)
         'EWC_online_mnist': 5000,   # _mnist does not mean we run it on MNIST (used for backward compatibility)
         'SI': 2,
         'MAS': 50,
         'GEM_510': 0.005,
+        'GEM_500': 0.005,
         'GEM_300': 0.005,
         'GEM_60': 0.005,
+        'GEM_50': 0.005,
         'GEM_30': 0.005,
         'GEM_15': 0.005,
         'GEM_12': 0.005
@@ -238,14 +279,17 @@ if __name__ == '__main__':
         avg_auroc_history_all_repeats = []
         avg_auprc_history_all_repeats = []
         times_per_run = []
-        times_per_task = np.zeros((args.repeat, 6))
+        times_per_task = np.zeros((args.repeat, num_tasks))
         epochs_per_run = []
 
-        runs_task_names = [['HS', 'SA', 'S', 'SA_2', 'C', 'HD'],
-                           ['C', 'HD', 'SA', 'HS', 'SA_2', 'S'],
-                           ['SA', 'S', 'HS', 'SA_2', 'HD', 'C'],
-                           ['HD', 'SA_2', 'SA', 'C', 'S', 'HS'],
-                           ['SA', 'HS', 'C', 'SA_2', 'HD', 'S']]
+        if args.network_type == 'transformer':
+            runs_task_names = [['HS', 'SA', 'S', 'SA_2', 'C', 'HD'],
+                               ['C', 'HD', 'SA', 'HS', 'SA_2', 'S'],
+                               ['SA', 'S', 'HS', 'SA_2', 'HD', 'C'],
+                               ['HD', 'SA_2', 'SA', 'C', 'S', 'HS'],
+                               ['SA', 'HS', 'C', 'SA_2', 'HD', 'S']]
+        else:   # MLP or CNN - use Split CIFAR-100
+            runs_task_names = [list(map(str, list(range(num_tasks))))] * args.num_runs
 
         for r in range(args.repeat):
             print('- - Run %d - -' % (r + 1))
@@ -255,7 +299,7 @@ if __name__ == '__main__':
 
             # Run the experiment
             acc_table, auroc_table, auprc_table, task_names, epochs, times_per_task = \
-                run(args, do_early_stopping, stopping_criteria, runs_task_names[r], times_per_task, previous_time)
+                run(args, do_early_stopping, stopping_criteria, runs_task_names[r], num_tasks, times_per_task, previous_time, split_cifar_100)
             print('Accuracy dict:', acc_table)
             print('AUROC dict:', auroc_table)
             print('AUPRC dict:', auprc_table)
@@ -264,10 +308,10 @@ if __name__ == '__main__':
 
             # Calculate average performance across tasks
             # Customize this part for a different performance metric
-            avg_acc_history = [0] * len(task_names)
-            avg_auroc_history = [0] * len(task_names)
-            avg_auprc_history = [0] * len(task_names)
-            for i in range(len(task_names)):
+            avg_acc_history = [0] * num_tasks
+            avg_auroc_history = [0] * num_tasks
+            avg_auprc_history = [0] * num_tasks
+            for i in range(num_tasks):
                 train_name = task_names[i]
                 cls_acc_sum = 0
                 cls_auroc_sum = 0
@@ -322,8 +366,8 @@ if __name__ == '__main__':
 
 
     ### Plot values of acc, auroc and auprc for average values until every task
-    num_tasks = len(task_names)
-    min_y = 30
+    # num_tasks = len(task_names)
+    min_y = 30 if args.network_type == 'transformer' else 0
     colors = ['tab:blue', 'tab:orange', 'tab:green']
 
     mean_acc, std_acc = np.mean(avg_acc_history_all_repeats, axis=0), np.std(avg_acc_history_all_repeats, axis=0)
@@ -333,7 +377,7 @@ if __name__ == '__main__':
     mean_time_per_task, std_time_per_task = np.mean(times_per_task, axis=0), np.std(times_per_task, axis=0)
 
     print('\nPerformance means until a specific task:')
-    for t in range(len(runs_task_names[0])):
+    for t in range(num_tasks):
         print('------------------------------------------')
         print('Mean time for task %d: %.2f +/- %.2f s,  %.2f +/- %.2f min' % (t+1, mean_time_per_task[t], std_time_per_task[t], mean_time_per_task[t] / 60, std_time_per_task[t] / 60))
         print('Mean time until task %d: %.2f s,  %.2f min' % (t+1, sum(mean_time_per_task[:t + 1]), sum(mean_time_per_task[:t + 1]) / 60))
@@ -359,5 +403,11 @@ if __name__ == '__main__':
                              (args.repeat, args.agent_name, str(do_early_stopping), stopping_criteria),
                              colors[:len(metrics)], 'Metric value', min_y)
 
+    print('\nMean time per task:')
+    print([sum(mean_time_per_task[:i + 1]) / 60 for i in range(len(mean_time_per_task))])
+
+    print('\nEnd performance')
+    [print(k, ':', v['acc'], '+/-', v['std_acc']) for k, v in end_performance.items()]
+    print([v['acc'] for k, v in end_performance.items()])
 
 

@@ -147,13 +147,13 @@ def plot_task_results(data, method_names, markers, colors, x_ticks, x_label, y_l
 
     # plt.yticks([75, 80, 85, 90, 95])
 
-    x = list(range(1, 7))
+    x = list(range(1, len(x_ticks) + 1))
 
     for i, method_res in enumerate(data):
         plt.plot(x, method_res, label=method_names[i], linestyle='--', color=colors[i], marker=markers[i],
                  linewidth=2, markersize=12)
 
-    plt.xticks(x, x_ticks)
+    plt.xticks(x, x_ticks, fontsize=20)
     plt.xlabel(x_label)
     plt.ylabel(y_label)
     plt.legend()

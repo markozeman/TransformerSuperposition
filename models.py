@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer, Linear, Dropout, LayerNorm, MultiheadAttention
 from torch.nn import functional as F
+from math import prod
 
 
 class Transformer(nn.Module):
@@ -149,24 +150,34 @@ class MyTransformerEncoderLayerPSP(nn.Module):
 
 class MLP(nn.Module):
 
-    def __init__(self, input_size, num_classes, use_PSP=False):
+    def __init__(self, input_size, num_classes, use_PSP=False, data='NLP'):
         super(MLP, self).__init__()
 
-        hidden_size = 41    # 41 - to match (or slightly increase) number of parameters in transformer model
+        self.data = data
+
+        if data == 'NLP':
+            input_len = input_size * 256
+            hidden_size = 41    # 41 - to match (or slightly increase) number of parameters in transformer model
+        elif data == 'CV':
+            input_len = prod(input_size)
+            hidden_size = 1000
 
         if use_PSP:
-            self.linear_1 = nn.Linear(input_size * 256, hidden_size)
+            self.linear_1 = nn.Linear(input_len, hidden_size)
             self.linear_2 = nn.Linear(hidden_size, num_classes)
             self.trainable_layers = [self.linear_1, self.linear_2]
         else:
             self.mlp = nn.Sequential(
-                nn.Linear(input_size * 256, hidden_size),   # 8192 -> 41
+                nn.Linear(input_len, hidden_size),   # 8192 -> 41 for data=='NLP'
                 nn.ReLU(),
-                nn.Linear(hidden_size, num_classes),  # 41 -> 2
+                nn.Linear(hidden_size, num_classes),  # 41 -> 2 for data=='NLP'
             )
 
     def forward(self, input, use_PSP=False, contexts=None, task_id=None):
-        x = torch.flatten(input, start_dim=1, end_dim=2)
+        if self.data == 'NLP':
+            x = torch.flatten(input, start_dim=1, end_dim=2)
+        else:   # self.data = 'CV
+            x = input
 
         if use_PSP:
             for i, lyr in enumerate(self.trainable_layers):
@@ -180,6 +191,45 @@ class MLP(nn.Module):
             output = self.mlp(x)
 
         return output
+
+
+class CNN(nn.Module):
+    def __init__(self, input_size, num_classes):
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_size[0], 32, (3, 3))
+        self.conv2 = nn.Conv2d(32, 64, (3, 3))
+        self.pool = nn.MaxPool2d(2, 2)
+        self.fc1 = nn.Linear(64 * 6 * 6, 1323)
+        self.fc2 = nn.Linear(1323, num_classes)
+
+    def forward(self, input, use_PSP=False, contexts=None, task_id=None):
+
+        if use_PSP:
+            context_matrix_1 = torch.from_numpy(np.reshape(contexts[task_id][0],
+                                                           newshape=self.conv1.weight.cpu().size()).astype(np.float32)).cuda()
+
+            context_matrix_2 = torch.from_numpy(np.reshape(contexts[task_id][1],
+                                                           newshape=self.conv2.weight.cpu().size()).astype(np.float32)).cuda()
+
+            x = self.pool(F.relu(F.conv2d(input, self.conv1.weight * context_matrix_1, self.conv1.bias)))
+            x = self.pool(F.relu(F.conv2d(x, self.conv2.weight * context_matrix_2, self.conv2.bias)))
+            x = torch.flatten(x, 1)  # flatten all dimensions except batch
+
+            context_matrix_3 = torch.from_numpy(np.diag(contexts[task_id][2]).astype(np.float32)).cuda()
+            x = torch.matmul(x, context_matrix_3)
+            x = F.relu(self.fc1(x))
+
+            context_matrix_4 = torch.from_numpy(np.diag(contexts[task_id][3]).astype(np.float32)).cuda()
+            x = torch.matmul(x, context_matrix_4)
+            x = self.fc2(x)
+        else:
+            x = self.pool(F.relu(self.conv1(input)))
+            x = self.pool(F.relu(self.conv2(x)))
+            x = torch.flatten(x, 1)  # flatten all dimensions except batch
+            x = F.relu(self.fc1(x))
+            x = self.fc2(x)
+
+        return x
 
 
 class AdapterTransformer(nn.Module):
