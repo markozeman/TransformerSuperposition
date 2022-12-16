@@ -119,6 +119,26 @@ python separate_networks_and_adapters.py --method Adapters
 ```
 
 
+<br/><br/>
+Since SuperFormer use is not limited to transformer-based models and NLP domain, 
+we conducted experiments also with MLP and CNN models for Split CIFAR-100 dataset.
+
+To run code for Split CIFAR-100 (with automatic download of the dataset) use *--network_type* argument and provide value *MLP* or *CNN*.
+For example, starting from the root directory, you can run SuperFormer on Split CIFAR-100 dataset using CNN as follows:
+
+```
+python main.py --method SuperFormer --network_type CNN
+```
+
+Similarly, you can run SuperFormer on Split CIFAR-100 dataset using MLP as follows:
+
+```
+python main.py --method SuperFormer --network_type MLP
+```
+
+The same argument can be used in all comparative methods with the exception of Adapters, which are only suited for transformer models.
+
+
 ## Miscellaneous
 
 Please send any questions you might have about the code or the algorithm to <marko.zeman@fri.uni-lj.si>.
