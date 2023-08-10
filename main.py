@@ -22,6 +22,12 @@ if __name__ == '__main__':
     parser.add_argument('--num_runs', type=int, default=5)
     args, _ = parser.parse_known_args()
 
+    sparsify = False     # todo
+    share = 0.5
+
+    static_share = False    # only used if sparsify=True
+    min_share = 0.875        # only used when static_share=False
+
     superposition = True
     superposition_each_epoch = False
     first_average = 'average'     # show results on 'first' task or the 'average' results until current task
@@ -205,6 +211,26 @@ if __name__ == '__main__':
 
             all_tasks_test_data.append(test_loader)
 
+            if sparsify:
+                if not static_share:
+                    min_size = min(p.numel() for p in model.parameters())   # find the size of the smallest layer
+                    max_size = max(p.numel() for p in model.parameters())   # find the size of the largest layer
+
+                # Define a mask for each parameter tensor in the model
+                masks = []
+                for p in model.parameters():
+                    if not static_share:
+                        # # share of trainable weights depends on the number of weights per layer
+                        # share = compute_proportion(p.numel(), min_share, min_size, max_size)
+
+                        # share of trainable weights depends on the number of samples per task
+                        num_task_samples = y.shape[0]
+                        # share = compute_proportion(num_task_samples, min_share, 2000, 50000)
+                        share = compute_proportion_more_samples_higher_proportion(num_task_samples, min_share, 2000, 50000)
+
+                    mask = torch.rand(p.shape) < share  # share of the entries will be True, rest will be False
+                    masks.append(mask)
+
             for epoch in range(num_epochs):
                 model.train()
                 model = model.cuda()
@@ -223,6 +249,12 @@ if __name__ == '__main__':
                     optimizer.zero_grad()
                     loss = criterion(outputs, batch_y)
                     loss.backward()
+
+                    if sparsify:    # Apply mask to the gradients
+                        for par, msk in zip(model.parameters(), masks):
+                            if par.grad is not None:
+                                par.grad.data.mul_(msk.cuda())
+
                     optimizer.step()
 
                 # check validation set

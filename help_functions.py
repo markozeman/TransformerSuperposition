@@ -99,3 +99,24 @@ def get_model_outputs(model, batch_X, batch_mask, use_MLP, use_PSP, contexts, ta
         else:
             return model.forward(batch_X, batch_mask)
 
+
+def compute_proportion(size, min_share, min_size, max_size):
+    """
+    Function to determine the proportion of trainable weights. The proportion is linearly inversely proportional to
+    the size and ensures that the proportion is at least min_share for the biggest layer in the network.
+
+    For the smallest layer (i.e., size equals min_size), the function will return 1.
+    For the largest layer (i.e., size equals max_size), the function will return min_share.
+
+    :param size: number of parameters of the current layer
+    :param min_share: minimal share of trainable weights (used for the biggest layer)
+    :param min_size: number of parameters of the largest layer
+    :param max_size: number of parameters of the largest layer
+    :return: proportional share
+    """
+    return min_share + (1 - min_share) * ((max_size - size) / (max_size - min_size))
+
+
+def compute_proportion_more_samples_higher_proportion(size, min_share, min_size, max_size):
+    return 1 - (1 - min_share) * ((max_size - size) / (max_size - min_size))
+
