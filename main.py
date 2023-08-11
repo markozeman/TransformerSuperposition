@@ -25,7 +25,7 @@ if __name__ == '__main__':
     sparsify = False     # todo
     share = 0.5
 
-    static_share = False    # only used if sparsify=True
+    static_share = True    # only used if sparsify=True
     min_share = 0.875        # only used when static_share=False
 
     superposition = True
@@ -218,7 +218,7 @@ if __name__ == '__main__':
 
                 # Define a mask for each parameter tensor in the model
                 masks = []
-                for p in model.parameters():
+                for lyr_ind, p in enumerate(model.parameters()):
                     if not static_share:
                         # # share of trainable weights depends on the number of weights per layer
                         # share = compute_proportion(p.numel(), min_share, min_size, max_size)
@@ -228,7 +228,25 @@ if __name__ == '__main__':
                         # share = compute_proportion(num_task_samples, min_share, 2000, 50000)
                         share = compute_proportion_more_samples_higher_proportion(num_task_samples, min_share, 2000, 50000)
 
+                    # random mask
                     mask = torch.rand(p.shape) < share  # share of the entries will be True, rest will be False
+
+                    # # mask depends on contexts
+                    # if lyr_ind % 2 == 0:    # weight layers
+                    #     if t == 0:  # in the first task there are no contexts yet, so use random 50% of weights
+                    #         mask = torch.rand(p.shape) < 0.5
+                    #     else:
+                    #         if layer_dimension[int(lyr_ind/2)] == 2:
+                    #             # mask = torch.tensor(contexts[t - 1][int(lyr_ind / 2)]).reshape(p.shape) == 1  # 1 in context is now True, -1 is now False
+                    #             mask = torch.tensor(contexts[t-1][int(lyr_ind/2)]).reshape(p.shape) == -1    # 1 in context is now False, -1 is now True
+                    #         elif layer_dimension[int(lyr_ind/2)] == 1:
+                    #             # mask = torch.tensor(contexts[t - 1][int(lyr_ind / 2)]).repeat(p.shape[0]).view(p.shape) == 1    # 1 in context is now True, -1 is now False
+                    #             mask = torch.tensor(contexts[t - 1][int(lyr_ind / 2)]).repeat(p.shape[0]).view(p.shape) == -1   # 1 in context is now False, -1 is now True
+                    #         else:
+                    #             raise ValueError('What to do with this value regarding the mask?')
+                    # else:   # bias layers
+                    #     mask = torch.rand(p.shape) < share  # share of the entries will be True, rest will be False
+
                     masks.append(mask)
 
             for epoch in range(num_epochs):
