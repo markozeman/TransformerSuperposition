@@ -22,11 +22,16 @@ if __name__ == '__main__':
     parser.add_argument('--num_runs', type=int, default=5)
     args, _ = parser.parse_known_args()
 
-    sparsify = False     # todo
-    share = 0.5
+    sparsify = False
+    share = 0.0
 
-    static_share = True    # only used if sparsify=True
-    min_share = 0.875        # only used when static_share=False
+    static_share = False    # only used if sparsify=True
+    min_share = 0.0       # only used when static_share=False
+
+    sparsify_low_values = False  # train only the lowest 'share_low_values' share in each layer by weights' absolute values
+    share_low_values = 0.0
+    if sparsify_low_values:     # static_share is always set to True when dealing with sparsifying low absolute values
+        static_share = True
 
     superposition = True
     superposition_each_epoch = False
@@ -224,12 +229,20 @@ if __name__ == '__main__':
                         # share = compute_proportion(p.numel(), min_share, min_size, max_size)
 
                         # share of trainable weights depends on the number of samples per task
-                        num_task_samples = y.shape[0]
+                        num_task_samples = y_train.shape[0]
                         # share = compute_proportion(num_task_samples, min_share, 2000, 50000)
                         share = compute_proportion_more_samples_higher_proportion(num_task_samples, min_share, 2000, 50000)
 
-                    # random mask
-                    mask = torch.rand(p.shape) < share  # share of the entries will be True, rest will be False
+                    if sparsify_low_values:
+                        # Sort the weights by their absolute values and find the threshold value
+                        flat_weights = torch.flatten(torch.abs(p))
+                        threshold = torch.sort(flat_weights)[0][int(share_low_values * flat_weights.shape[0])]  # share_low_values is the percentage of used weights
+
+                        # Create a mask where weights below the threshold are set to True (trainable)
+                        mask = torch.abs(p) <= threshold
+                    else:
+                        # random mask
+                        mask = torch.rand(p.shape) < share  # share of the entries will be True, rest will be False
 
                     # # mask depends on contexts
                     # if lyr_ind % 2 == 0:    # weight layers
